@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Errands</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Errands">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="referrer" content="no-referrer">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<style>
+  :root {
+    --bg: #f2f2f7; --card: #fff; --text: #111; --muted: #8a8a8e; --line: #e5e5ea;
+    --accent: #0a7cff; --red: #ff3b30; --chip: #eef4ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --muted: #8e8e93; --line: #2c2c2e;
+      --accent: #0a84ff; --red: #ff453a; --chip: #1a2a40;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 17px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header { position: sticky; top: 0; background: var(--bg); padding: calc(14px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left)); z-index: 2; }
+  h1 { font-size: 32px; margin: 6px 0 12px; font-weight: 700; letter-spacing: -0.02em; }
+  .count { color: var(--muted); font-size: 17px; font-weight: 500; margin-left: 8px; }
+  form { display: flex; gap: 8px; }
+  input {
+    flex: 1; min-width: 0; font: inherit; padding: 11px 14px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--card); color: var(--text); outline: none;
+  }
+  input:focus { border-color: var(--accent); }
+  .add {
+    font: inherit; font-weight: 600; padding: 0 16px; border: 0; border-radius: 12px;
+    background: var(--accent); color: #fff;
+  }
+  .add:disabled { opacity: .5; }
+  main { padding: 0 calc(16px + env(safe-area-inset-right)) calc(110px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); }
+  section { margin-top: 22px; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+    font-weight: 600; margin: 0 0 7px 4px; display: flex; gap: 8px; align-items: center;
+  }
+  h2 .n { font-weight: 500; }
+  ul { list-style: none; margin: 0; padding: 0; background: var(--card); border-radius: 14px; overflow: hidden; }
+  li {
+    display: flex; align-items: center; gap: 12px; padding: 13px 14px;
+    border-top: 1px solid var(--line); cursor: pointer; transition: opacity .3s;
+  }
+  li:first-child { border-top: 0; }
+  .check {
+    width: 24px; height: 24px; border-radius: 50%; border: 2px solid #c7c7cc; flex: none;
+    display: grid; place-items: center; transition: background .15s, border-color .15s;
+  }
+  li.done .check { background: var(--accent); border-color: var(--accent); }
+  li.done .check::after {
+    content: ""; width: 6px; height: 11px; border: solid #fff; border-width: 0 2.5px 2.5px 0;
+    transform: translateY(-1px) rotate(45deg);
+  }
+  li.done { opacity: .35; }
+  li.done .title { text-decoration: line-through; }
+  .title { flex: 1; }
+  .tag {
+    font-size: 12px; font-weight: 600; color: var(--accent); background: var(--chip);
+    padding: 3px 8px; border-radius: 8px; white-space: nowrap;
+  }
+  .due { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .due.soon { color: var(--red); font-weight: 600; }
+  .empty { text-align: center; color: var(--muted); margin-top: 70px; line-height: 1.6; }
+  .pending { color: var(--muted); font-style: italic; }
+  .toast {
+    position: fixed; left: 50%; bottom: 30px; transform: translate(-50%, 140px);
+    background: #2c2c2e; color: #fff; padding: 12px 18px; border-radius: 14px;
+    display: flex; gap: 18px; align-items: center; transition: transform .25s;
+    font-size: 15px; box-shadow: 0 8px 28px rgba(0,0,0,.28); max-width: calc(100% - 32px);
+  }
+  .toast.show { transform: translate(-50%, 0); }
+  .toast button { background: none; border: 0; color: #64d2ff; font: inherit; font-weight: 600; padding: 0; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Errands<span class="count" id="count"></span></h1>
+    <form id="addForm">
+      <input id="addInput" placeholder="Add something..." autocomplete="off" enterkeyhint="done">
+      <button class="add" id="addBtn">Add</button>
+    </form>
+  </header>
+  <main id="list"><p class="empty">Loading...</p></main>
+  <div class="toast" id="toast"><span id="toastText"></span><button id="undo">Undo</button></div>
+
+<script>
+  // Data comes from the Errands Apps Script. The key is read from the part of the link after #k=,
+  // which browsers never send to GitHub, and remembered on this phone.
+  const API = 'https://script.google.com/macros/s/AKfycbw6ndraPCRAMuzAZK0TTrB6KQdKXdx_1W-e3TFUqMUuUEjs4c39mE91OTE2h5MOiAuWnA/exec';
+  const fromLink = (location.hash.match(/[#&]k=([0-9a-f]+)/i) || [])[1];
+  if (fromLink) localStorage.setItem('errandsKey', fromLink);
+  const TOKEN = fromLink || localStorage.getItem('errandsKey') || '';
+  const GROUP_FOR_CATEGORY = { 'Buy': 'Buy anywhere', 'Pick up': 'Pick up', 'Do': 'To do', 'Work': 'Work' };
+  const LOOSE_ORDER = ['Buy anywhere', 'Pick up', 'To do', 'Work'];
+  let tasks = [];
+  let pendingText = '';
+  let toastTimer, lastDoneId;
+
+  async function call(action, params) {
+    const u = new URL(API);
+    u.searchParams.set('k', TOKEN);
+    u.searchParams.set('action', action);
+    Object.keys(params || {}).forEach(k => u.searchParams.set(k, params[k]));
+    const res = await fetch(u, { cache: 'no-store', referrerPolicy: 'no-referrer' });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Something went wrong');
+    return data;
+  }
+  const api = {
+    listTasks: () => call('list').then(d => d.tasks),
+    addTask: text => call('add', { text }).then(d => d.added),
+    completeTask: id => call('done', { id }),
+    reopenTask: id => call('undo', { id })
+  };
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function todayStr(offset = 0) {
+    const d = new Date(); d.setDate(d.getDate() + offset);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function dueLabel(due) {
+    if (!due) return '';
+    const today = todayStr(), tomorrow = todayStr(1);
+    if (due < today) return '<span class="due soon">Overdue</span>';
+    if (due === today) return '<span class="due soon">Today</span>';
+    if (due === tomorrow) return '<span class="due">Tomorrow</span>';
+    const d = new Date(due + 'T12:00:00');
+    return '<span class="due">' + d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }) + '</span>';
+  }
+
+  function groupName(t) { return t.store || GROUP_FOR_CATEGORY[t.category] || 'To do'; }
+
+  function render() {
+    $('count').textContent = tasks.length ? tasks.length : '';
+    const groups = {};
+    tasks.forEach(t => (groups[groupName(t)] = groups[groupName(t)] || []).push(t));
+
+    // Shops first (most items on top), then the loose groups in a fixed order
+    const shopNames = Object.keys(groups).filter(g => LOOSE_ORDER.indexOf(g) === -1)
+      .sort((a, b) => groups[b].length - groups[a].length || a.localeCompare(b));
+    const order = shopNames.concat(LOOSE_ORDER.filter(g => groups[g]));
+
+    let html = '';
+    if (pendingText) {
+      html += '<section><h2>Sorting</h2><ul><li><span class="check"></span><span class="title pending">' +
+        esc(pendingText) + '</span></li></ul></section>';
+    }
+    order.forEach(g => {
+      const items = groups[g].slice().sort((a, b) => (a.due || '9') < (b.due || '9') ? -1 : 1);
+      const isShop = shopNames.indexOf(g) > -1;
+      html += '<section><h2>' + esc(g) + ' <span class="n">' + items.length + '</span></h2><ul>';
+      items.forEach(t => {
+        const tag = isShop && t.category === 'Pick up' ? '<span class="tag">Pick up</span>' : '';
+        html += '<li data-id="' + esc(t.id) + '"><span class="check"></span><span class="title">' +
+          esc(t.title) + '</span>' + tag + dueLabel(t.due) + '</li>';
+      });
+      html += '</ul></section>';
+    });
+    if (!html) html = '<p class="empty">Nothing on the list.<br>Say "Hey Siri, add errand" to add something.</p>';
+    $('list').innerHTML = html;
+  }
+
+  async function load() {
+    if (!TOKEN) { $('list').innerHTML = '<p class="empty">Open this page from your Errands link<br>(the one that ends in #k=...).</p>'; return; }
+    try { tasks = await api.listTasks(); render(); }
+    catch (e) { $('list').innerHTML = '<p class="empty">Could not load the list.<br>' + esc(e.message || e) + '</p>'; }
+  }
+
+  function showToast(text, undoable) {
+    $('toastText').textContent = text;
+    $('undo').style.display = undoable ? '' : 'none';
+    $('toast').classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4000);
+  }
+
+  $('list').addEventListener('click', e => {
+    const li = e.target.closest('li[data-id]');
+    if (!li || li.classList.contains('done')) return;
+    const id = li.dataset.id;
+    const task = tasks.find(t => t.id === id);
+    li.classList.add('done');
+    lastDoneId = id;
+    api.completeTask(id).catch(() => { showToast('Could not save. Try again.'); load(); });
+    setTimeout(() => {
+      tasks = tasks.filter(t => t.id !== id);
+      render();
+      showToast('Done: ' + (task ? task.title : ''), true);
+    }, 450);
+  });
+
+  $('undo').addEventListener('click', async () => {
+    $('toast').classList.remove('show');
+    if (!lastDoneId) return;
+    await api.reopenTask(lastDoneId);
+    lastDoneId = null;
+    load();
+  });
+
+  $('addForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const text = $('addInput').value.trim();
+    if (!text) return;
+    $('addInput').value = '';
+    $('addInput').blur();
+    pendingText = text; render();
+    try {
+      const added = await api.addTask(text);
+      tasks = tasks.concat(added);
+    } catch (err) {
+      showToast('Could not add. Try again.');
+    }
+    pendingText = ''; render();
+  });
+
+  // Refresh when you come back to the page from the home screen
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+  load();
+</script>
+</body>
+</html>

@@ -215,10 +215,14 @@
     load();
   });
 
+  let adding = false;
   $('addForm').addEventListener('submit', async e => {
     e.preventDefault();
     const text = $('addInput').value.trim();
-    if (!text) return;
+    if (!text || adding) return; // one save at a time, so a double tap can't add it twice
+    adding = true;
+    $('addBtn').disabled = true;
+    $('addBtn').textContent = 'Adding...';
     $('addInput').value = '';
     $('addInput').blur();
     pendingText = text; render();
@@ -229,6 +233,9 @@
       showToast('Could not add. Try again.');
     }
     pendingText = ''; render();
+    adding = false;
+    $('addBtn').disabled = false;
+    $('addBtn').textContent = 'Add';
   });
 
   // Refresh when you come back to the page from the home screen

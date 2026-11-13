@@ -85,6 +85,39 @@
   }
   .toast.show { transform: translate(-50%, 0); }
   .toast button { background: none; border: 0; color: #64d2ff; font: inherit; font-weight: 600; padding: 0; }
+  /* Press and hold an item to change its shop: no text selection or iOS callout */
+  li { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  li.pressing { background: var(--line); }
+  /* Grocery section headings inside a shop's card */
+  li.aisle {
+    padding: 10px 14px 4px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); cursor: default;
+  }
+  li.aisle + li { border-top: 0; }
+  .tip { text-align: center; color: var(--muted); font-size: 13px; margin-top: 26px; }
+  .backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none;
+    transition: opacity .2s; z-index: 5;
+  }
+  .backdrop.show { opacity: 1; pointer-events: auto; }
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); z-index: 6;
+    border-radius: 18px 18px 0 0; box-shadow: 0 -8px 28px rgba(0,0,0,.2);
+    padding: 18px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+    transform: translateY(110%); transition: transform .25s;
+  }
+  .sheet.show { transform: translateY(0); }
+  .sheet-title { font-weight: 600; margin-bottom: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .chip {
+    font: inherit; font-size: 15px; padding: 8px 12px; border-radius: 10px; border: 0;
+    background: var(--chip); color: var(--accent);
+  }
+  .chip.current { background: var(--accent); color: #fff; }
+  .cancel {
+    display: block; width: 100%; margin-top: 12px; font: inherit; font-weight: 600; padding: 12px;
+    border: 0; border-radius: 12px; background: var(--bg); color: var(--text);
+  }
 </style>
 </head>
 <body>
@@ -97,14 +130,28 @@
   </header>
   <main id="list"><p class="empty">Loading...</p></main>
   <div class="toast" id="toast"><span id="toastText"></span><button id="undo">Undo</button></div>
+  <div class="backdrop" id="backdrop"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-title" id="sheetTitle"></div>
+    <div class="chips" id="chips"></div>
+    <form id="shopForm">
+      <input id="shopInput" placeholder="Other shop" autocomplete="off" enterkeyhint="done">
+      <button class="add">Move</button>
+    </form>
+    <button class="cancel" id="sheetCancel" type="button">Cancel</button>
+  </div>
 
 <script>
   // Data comes from the Errands Apps Script. The key is read from the part of the link after #k=,
   // which browsers never send to GitHub, and remembered on this phone.
   const API = 'https://script.google.com/macros/s/AKfycbw6ndraPCRAMuzAZK0TTrB6KQdKXdx_1W-e3TFUqMUuUEjs4c39mE91OTE2h5MOiAuWnA/exec';
   const fromLink = (location.hash.match(/[#&]k=([0-9a-f]+)/i) || [])[1];
-  if (fromLink) localStorage.setItem('errandsKey', fromLink);
-  const TOKEN = fromLink || localStorage.getItem('errandsKey') || '';
+  const store = { // localStorage can be unavailable (private browsing); then the link alone is used
+    get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} }
+  };
+  if (fromLink) store.set('errandsKey', fromLink);
+  const TOKEN = fromLink || store.get('errandsKey') || '';
   const GROUP_FOR_CATEGORY = { 'Buy': 'Buy anywhere', 'Pick up': 'Pick up', 'Do': 'To do', 'Work': 'Work' };
   const LOOSE_ORDER = ['Buy anywhere', 'Pick up', 'To do', 'Work'];
   let tasks = [];
@@ -125,8 +172,13 @@
     listTasks: () => call('list').then(d => d.tasks),
     addTask: text => call('add', { text }).then(d => d.added),
     completeTask: id => call('done', { id }),
-    reopenTask: id => call('undo', { id })
+    reopenTask: id => call('undo', { id }),
+    setStore: (id, store) => call('setstore', { id, store })
   };
+  // Grocery sections, in walking order: fresh first, cold things last
+  const AISLE_ORDER = ['Produce & fresh', 'Aisles', 'Fridge & frozen'];
+  const COMMON_SHOPS = ['Albert', 'Lidl', 'Billa', 'Tesco', 'Kaufland', 'Rohlík', 'dm', 'Rossmann', 'Pharmacy',
+    'Post office', 'Zásilkovna', 'IKEA'];
 
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -164,10 +216,19 @@
         esc(pendingText) + '</span></li></ul></section>';
     }
     order.forEach(g => {
-      const items = groups[g].slice().sort((a, b) => (a.due || '9') < (b.due || '9') ? -1 : 1);
+      // Groceries are grouped by section (fresh, aisles, fridge); everything else keeps due-date order
+      const hasAisles = groups[g].some(t => t.aisle);
+      const rank = t => { const i = AISLE_ORDER.indexOf(t.aisle); return i < 0 ? AISLE_ORDER.length : i; };
+      const items = groups[g].slice().sort((a, b) =>
+        (hasAisles ? rank(a) - rank(b) : 0) || ((a.due || '9') < (b.due || '9') ? -1 : (a.due || '9') > (b.due || '9') ? 1 : 0));
       const isShop = shopNames.indexOf(g) > -1;
       html += '<section><h2>' + esc(g) + ' <span class="n">' + items.length + '</span></h2><ul>';
+      let lastAisle = null;
       items.forEach(t => {
+        if (hasAisles && (t.aisle || 'Other') !== lastAisle) {
+          lastAisle = t.aisle || 'Other';
+          html += '<li class="aisle">' + esc(lastAisle) + '</li>';
+        }
         const tag = isShop && t.category === 'Pick up' ? '<span class="tag">Pick up</span>' : '';
         html += '<li data-id="' + esc(t.id) + '"><span class="check"></span><span class="title">' +
           esc(t.title) + '</span>' + tag + dueLabel(t.due) + '</li>';
@@ -175,8 +236,93 @@
       html += '</ul></section>';
     });
     if (!html) html = '<p class="empty">Nothing on the list.<br>Say "Hey Siri, add errand" to add something.</p>';
+    else html += '<p class="tip">Press and hold an item to change its shop.</p>';
     $('list').innerHTML = html;
   }
+
+  // ---------- Change a task's shop (press and hold) ----------
+  let movingId = null;
+
+  function openShopSheet(id) {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    movingId = id;
+    $('sheetTitle').textContent = 'Move "' + task.title + '" to';
+    const shops = [];
+    tasks.forEach(t => { if (t.store && shops.indexOf(t.store) < 0) shops.push(t.store); });
+    COMMON_SHOPS.forEach(s => { if (shops.indexOf(s) < 0) shops.push(s); });
+    $('chips').innerHTML = shops.map(s => '<button type="button" class="chip' + (s === task.store ? ' current' : '') +
+      '" data-shop="' + esc(s) + '">' + esc(s) + '</button>').join('') +
+      '<button type="button" class="chip' + (!task.store ? ' current' : '') + '" data-shop="">No shop</button>';
+    $('shopInput').value = '';
+    $('backdrop').classList.add('show');
+    $('sheet').classList.add('show');
+  }
+
+  function closeShopSheet() {
+    movingId = null;
+    $('shopInput').blur();
+    $('backdrop').classList.remove('show');
+    $('sheet').classList.remove('show');
+  }
+
+  async function moveTo(store) {
+    const id = movingId;
+    const task = tasks.find(t => t.id === id);
+    closeShopSheet();
+    if (!task || task.store === store) return;
+    const before = task.store;
+    task.store = store; render(); // show it right away, save in the background
+    showToast(store ? 'Moved to ' + store : 'Removed the shop');
+    try { await api.setStore(id, store); }
+    catch (e) { task.store = before; render(); showToast('Could not move it. Try again.'); }
+  }
+
+  $('chips').addEventListener('click', e => {
+    const b = e.target.closest('[data-shop]');
+    if (b) moveTo(b.dataset.shop);
+  });
+  $('shopForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const s = $('shopInput').value.trim();
+    if (s) moveTo(s);
+  });
+  $('sheetCancel').addEventListener('click', closeShopSheet);
+  $('backdrop').addEventListener('click', closeShopSheet);
+
+  let pressTimer = null, longPressed = false, pressLi = null, startX = 0, startY = 0;
+  function cancelPress() {
+    clearTimeout(pressTimer);
+    if (pressLi) pressLi.classList.remove('pressing');
+    pressLi = null;
+  }
+  $('list').addEventListener('touchstart', e => {
+    const li = e.target.closest('li[data-id]');
+    longPressed = false;
+    if (!li || li.classList.contains('done')) return;
+    pressLi = li;
+    startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+    li.classList.add('pressing');
+    pressTimer = setTimeout(() => {
+      longPressed = true;
+      const id = li.dataset.id;
+      cancelPress();
+      if (navigator.vibrate) navigator.vibrate(10);
+      openShopSheet(id);
+    }, 500);
+  }, { passive: true });
+  $('list').addEventListener('touchmove', e => {
+    if (pressLi && (Math.abs(e.touches[0].clientX - startX) > 10 || Math.abs(e.touches[0].clientY - startY) > 10)) cancelPress();
+  }, { passive: true });
+  $('list').addEventListener('touchend', cancelPress);
+  $('list').addEventListener('touchcancel', cancelPress);
+  // On a computer: right-click an item
+  $('list').addEventListener('contextmenu', e => {
+    const li = e.target.closest('li[data-id]');
+    if (!li) return;
+    e.preventDefault();
+    openShopSheet(li.dataset.id);
+  });
 
   async function load() {
     if (!TOKEN) { $('list').innerHTML = '<p class="empty">Open this page from your Errands link<br>(the one that ends in #k=...).</p>'; return; }
@@ -193,6 +339,7 @@
   }
 
   $('list').addEventListener('click', e => {
+    if (longPressed) { longPressed = false; return; } // a press-and-hold is not a tap
     const li = e.target.closest('li[data-id]');
     if (!li || li.classList.contains('done')) return;
     const id = li.dataset.id;
